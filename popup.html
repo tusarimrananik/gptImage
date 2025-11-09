@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Prompt Runner</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="popup.css">
+  <style>
+    :root { --bg:#0f1115; --panel:#171a21; --muted:#8b95a7; --text:#e8eef8; --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; }
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,Segoe UI,Roboto,Arial,sans-serif;}
+    .wrap{width:360px;max-height:600px;overflow:auto;padding:12px;}
+    h1{font-size:16px;margin:0 0 8px;}
+    fieldset{border:1px solid #202532;border-radius:10px;padding:10px;margin:10px 0;background:var(--panel);}
+    legend{padding:0 6px;color:var(--muted);}
+    label{display:block;margin:6px 0 4px;}
+    input[type="file"],input[type="number"],input[type="text"]{width:100%;box-sizing:border-box;background:#0e1117;border:1px solid #2a3242;color:var(--text);padding:8px;border-radius:8px;}
+    .row{display:flex;gap:8px;align-items:center;}
+    .row > *{flex:1;}
+    .hint{color:var(--muted);font-size:12px;margin-top:4px;}
+    .btns{display:flex;gap:8px;margin-top:8px;}
+    button{flex:1;background:#1f2633;border:1px solid #2a3346;color:var(--text);padding:8px;border-radius:8px;cursor:pointer}
+    button.primary{background:var(--accent);border-color:var(--accent);color:white;font-weight:600}
+    button.warn{background:#2b2414;border-color:#3a2f12;color:#f7d58a}
+    button.ghost{background:transparent;border-color:#2a3346}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    progress{width:100%;height:10px;-webkit-appearance:none;appearance:none}
+    progress::-webkit-progress-bar{background:#0e1117;border-radius:8px}
+    progress::-webkit-progress-value{background:var(--accent);border-radius:8px}
+    .stat{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:4px}
+    .k-cap{display:flex;gap:8px;align-items:center;margin-top:6px}
+    .badge{display:inline-block;padding:2px 6px;border-radius:999px;background:#0e1117;border:1px solid #2a3242;color:var(--muted);font-size:12px}
+    .list{margin:6px 0 0;padding:0;list-style:none;max-height:140px;overflow:auto;border:1px solid #202532;border-radius:8px}
+    .list li{padding:6px 8px;border-bottom:1px solid #202532;display:flex;justify-content:space-between;gap:8px}
+    .list li:last-child{border-bottom:0}
+    .ok{color:var(--ok)} .warnTxt{color:var(--warn)} .err{color:var(--err)}
+    .footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:var(--muted);font-size:12px}
+    a{color:#9ec1ff;text-decoration:none}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Prompt Runner</h1>
+
+    <!-- Upload & basic config -->
+    <fieldset>
+      <legend>1) Load prompts</legend>
+      <label for="promptsFile">prompts.json</label>
+      <input id="promptsFile" type="file" accept="application/json" />
+      <div class="hint">The file should contain an <code>image_prompts</code> array.</div>
+      <div class="stat"><span>File:</span><span id="fileName" class="badge">none</span></div>
+      <div class="stat"><span>Detected prompts:</span><span id="promptCount" class="badge">0</span></div>
+    </fieldset>
+
+    <!-- Concurrency & naming -->
+    <fieldset>
+      <legend>2) Run settings</legend>
+
+      <label>Concurrency</label>
+      <div class="row" role="radiogroup" aria-labelledby="concurrencyLabel" id="concurrencyGroup">
+        <label class="row" style="flex:unset;gap:6px;width:50%">
+          <input type="radio" name="conc" id="concAll" value="all" />
+          <span>All tabs at once</span>
+        </label>
+        <label class="row" style="flex:unset;gap:6px;width:50%">
+          <input type="radio" name="conc" id="concCap" value="cap" checked />
+          <span>Cap at K</span>
+        </label>
+      </div>
+
+      <div class="k-cap">
+        <label for="kInput" style="flex:0 0 80px">K value</label>
+        <input id="kInput" type="number" min="1" step="1" value="8" aria-describedby="kHint" />
+        <span id="kHint" class="hint">Used only if “Cap at K” is selected.</span>
+      </div>
+
+      <label for="folderName" style="margin-top:8px;">Folder for downloads</label>
+      <input id="folderName" type="text" value="assets/images" />
+      <div class="hint">Files will be named by JSON order: <code>01.png</code>, <code>02.png</code>, …</div>
+    </fieldset>
+
+    <!-- Controls -->
+    <fieldset>
+      <legend>3) Controls</legend>
+      <div class="btns">
+        <button id="startBtn" class="primary">Start</button>
+        <button id="pauseBtn" class="ghost" disabled>Pause</button>
+        <button id="resumeBtn" class="ghost" disabled>Resume</button>
+        <button id="stopBtn" class="warn" disabled>Stop</button>
+      </div>
+      <div class="hint" style="margin-top:6px">Start = queue & open tabs • Pause = stop assigning new prompts • Resume = continue • Stop = cancel remaining</div>
+    </fieldset>
+
+    <!-- Live status -->
+    <fieldset>
+      <legend>4) Progress</legend>
+      <progress id="progressBar" max="100" value="0"></progress>
+      <div class="stat">
+        <span id="runStatus">Idle</span>
+        <span><span id="countDone">0</span>/<span id="countTotal">0</span></span>
+      </div>
+      <ul id="recentList" class="list" aria-label="Recent activity"></ul>
+      <div id="errorBox" class="hint err" style="display:none;margin-top:6px"></div>
+    </fieldset>
+
+    <div class="footer">
+      <a href="options.html" target="_blank" rel="noopener">Options</a>
+      <span>v1 · MV3</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

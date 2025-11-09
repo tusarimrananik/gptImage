@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Prompt Runner · Options</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body{font:14px/1.4 system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:20px;color:#e8eef8;background:#0f1115}
+    h1{font-size:18px;margin:0 0 12px}
+    label{display:block;margin:10px 0 6px;color:#9aa7bd}
+    textarea,input[type="text"]{width:100%;min-height:110px;background:#0e1117;color:#e8eef8;border:1px solid #2a3242;border-radius:8px;padding:10px;box-sizing:border-box}
+    .row{display:flex;gap:12px}
+    .row > *{flex:1}
+    .hint{color:#8b95a7;font-size:12px;margin-top:4px}
+    button{margin-top:14px;background:#3b82f6;color:white;border:0;padding:10px 14px;border-radius:8px;cursor:pointer}
+    .ok{color:#22c55e;margin-left:10px}
+  </style>
+</head>
+<body>
+  <h1>Options</h1>
+
+  <label for="globalId">GLOBAL_ID (prepended)</label>
+  <textarea id="globalId" placeholder="[GLOBAL_IDENTITY] ..."></textarea>
+  <div class="hint">This text is added before every prompt.</div>
+
+  <label for="styleModule">STYLE module (prepended)</label>
+  <textarea id="styleModule" placeholder="[STYLE_MODULE: cartoon] ..."></textarea>
+  <div class="hint">Optional. Add your watercolor/realistic/cartoon module here.</div>
+
+  <label for="outputSuffix">OUTPUT suffix (appended)</label>
+  <input id="outputSuffix" type="text" value=" [OUTPUT] High resolution, aspect ratio 3:2, single-frame composition, no collage.">
+  <div class="hint">Change if you need a different spec.</div>
+
+  <button id="saveBtn">Save</button><span id="saved" class="ok" style="display:none">Saved</span>
+
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+    "manifest_version": 3,
+    "name": "Prompt Runner",
+    "version": "1.0.0",
+    "action": {
+        "default_title": "Prompt Runner",
+        "default_popup": "popup.html"
+    },
+    "background": {
+        "service_worker": "background.js"
+    },
+    "permissions": [
+        "scripting",
+        "tabs",
+        "downloads",
+        "storage",
+        "alarms"
+    ],
+    "host_permissions": [
+        "https://chatgpt.com/*",
+        "https://*.chatgpt.com/*",
+        "https://chat.openai.com/*"
+    ],
+    "options_page": "options.html"
+}
