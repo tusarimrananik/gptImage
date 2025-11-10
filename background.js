@@ -49,7 +49,7 @@ const log = (s) => {
 };
 
 const padWidth = (n) => Math.max(2, String(n).length);
-const numName  = (i, pad) => String(i + 1).padStart(pad, "0");
+const numName = (i, pad) => String(i + 1).padStart(pad, "0");
 
 // small helper to promisify downloads.download for MV3
 function startDownload(opts) {
@@ -106,10 +106,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case "RUN_SNAPSHOT": {
         sendResponse({
           running: RUNTIME.active && !RUNTIME.paused,
-          paused:  RUNTIME.active && RUNTIME.paused,
-          done:    RUNTIME.done,
-          total:   RUNTIME.total,
-          recent:  RUNTIME.recent.slice(-12)
+          paused: RUNTIME.active && RUNTIME.paused,
+          done: RUNTIME.done,
+          total: RUNTIME.total,
+          recent: RUNTIME.recent.slice(-12)
         });
         break;
       }
@@ -195,21 +195,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 async function startRun(payload) {
   const { runner_options } = await chrome.storage.sync.get("runner_options");
   RUNTIME.opts = {
-    globalId:     runner_options?.globalId || "",
-    styleModule:  runner_options?.styleModule || "",
+    globalId: runner_options?.globalId || "",
+    styleModule: runner_options?.styleModule || "",
     outputSuffix: runner_options?.outputSuffix || " [OUTPUT] High resolution, aspect ratio 3:2, single-frame composition, no collage."
   };
 
-  RUNTIME.active  = true;
-  RUNTIME.paused  = false;
+  RUNTIME.active = true;
+  RUNTIME.paused = false;
   RUNTIME.prompts = payload.prompts.slice();
-  RUNTIME.total   = RUNTIME.prompts.length;
-  RUNTIME.done    = 0;
+  RUNTIME.total = RUNTIME.prompts.length;
+  RUNTIME.done = 0;
 
-  RUNTIME.folder  = payload.folder || "assets/images";
-  RUNTIME.mode    = payload.mode === "all" ? "all" : "cap";
-  RUNTIME.k       = Number.isFinite(payload.k) ? Math.max(1, payload.k) : 8;
-  RUNTIME.pad     = padWidth(RUNTIME.total);
+  RUNTIME.folder = payload.folder || "assets/images";
+  RUNTIME.mode = payload.mode === "all" ? "all" : "cap";
+  RUNTIME.k = Number.isFinite(payload.k) ? Math.max(1, payload.k) : 8;
+  RUNTIME.pad = padWidth(RUNTIME.total);
 
   RUNTIME.queue = RUNTIME.prompts.map((p, i) => ({ index: i, prompt: p, status: "queued" }));
 
@@ -236,7 +236,7 @@ async function stopRun(reason) {
   stopRotator();
 
   const ids = Array.from(RUNTIME.createdTabs);
-  if (ids.length) { try { chrome.tabs.remove(ids); } catch {} }
+  if (ids.length) { try { chrome.tabs.remove(ids); } catch { } }
 
   RUNTIME.createdTabs.clear();
   RUNTIME.assignedByTab.clear();
@@ -269,7 +269,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   const idx = RUNTIME.assignedByTab.get(tabId);
   if (typeof idx === "number") {
     const it = RUNTIME.queue[idx];
-    if (it && !["done","error"].includes(it.status)) setItemError(idx, "Tab closed before download");
+    if (it && !["done", "error"].includes(it.status)) setItemError(idx, "Tab closed before download");
   }
   const i = RUNTIME.assignedByTab.get(tabId);
   if (typeof i === "number") RUNTIME.tabIdByIndex.delete(i);
@@ -300,35 +300,50 @@ function assignToTab(item) {
 
     // safety
     setTimeout(() => {
-      try { chrome.tabs.get(tabId, (t) => {
-        if (chrome.runtime.lastError || !t) return;
-        if (item.status === "assigned") {
-          setItemError(item.index, "Page load timeout");
-          try { chrome.tabs.remove(tabId); } catch {}
-        }
-      }); } catch {}
+      try {
+        chrome.tabs.get(tabId, (t) => {
+          if (chrome.runtime.lastError || !t) return;
+          if (item.status === "assigned") {
+            setItemError(item.index, "Page load timeout");
+            try { chrome.tabs.remove(tabId); } catch { }
+          }
+        });
+      } catch { }
     }, 60000);
   });
 }
 
 function injectRunner(tabId, item) {
+  // 1) MAIN world: install download interceptor (CSP-safe)
   chrome.scripting.executeScript(
-    { target: { tabId }, files: ["content_chatgpt.js"] },
+    { target: { tabId }, files: ["page_intercept.js"], world: "MAIN" },
     () => {
       if (chrome.runtime.lastError) {
-        setItemError(item.index, "Injection failed");
-        try { chrome.tabs.remove(tabId); } catch {}
+        setItemError(item.index, "Main-world inject failed");
+        try { chrome.tabs.remove(tabId); } catch { }
         return;
       }
-      item.status = "submitted";
-      chrome.tabs.sendMessage(tabId, {
-        type: "RUN_PROMPT",
-        index: item.index,
-        prompt: item.prompt,
-        globalId: RUNTIME.opts.globalId,
-        styleModule: RUNTIME.opts.styleModule,
-        outputSuffix: RUNTIME.opts.outputSuffix
-      }, () => void 0);
+      // 2) Isolated world: your worker
+      chrome.scripting.executeScript(
+        { target: { tabId }, files: ["content_chatgpt.js"] },
+        () => {
+          if (chrome.runtime.lastError) {
+            setItemError(item.index, "Injection failed");
+            try { chrome.tabs.remove(tabId); } catch { }
+            return;
+          }
+          // 3) Kick off the prompt
+          item.status = "submitted";
+          chrome.tabs.sendMessage(tabId, {
+            type: "RUN_PROMPT",
+            index: item.index,
+            prompt: item.prompt,
+            globalId: RUNTIME.opts.globalId,
+            styleModule: RUNTIME.opts.styleModule,
+            outputSuffix: RUNTIME.opts.outputSuffix
+          }, () => void 0);
+        }
+      );
     }
   );
 }
@@ -340,13 +355,13 @@ function setItemDownloading(index) {
   // tell this tab to stop clicking (download has started)
   const tabId = RUNTIME.tabIdByIndex.get(index);
   if (tabId != null) {
-    try { chrome.tabs.sendMessage(tabId, { type: "DL_STARTED", index }); } catch {}
+    try { chrome.tabs.sendMessage(tabId, { type: "DL_STARTED", index }); } catch { }
   }
 }
 
 function setItemError(index, message) {
   const it = RUNTIME.queue[index];
-  if (!it || ["done","error"].includes(it.status)) return;
+  if (!it || ["done", "error"].includes(it.status)) return;
   it.status = "error";
   log(`#${numName(index, RUNTIME.pad)} error: ${message}`);
   maybeFinish(); pump();
@@ -368,7 +383,7 @@ function setItemDone(index) {
   // close its tab to avoid any future rotation clicks
   const tabId = RUNTIME.tabIdByIndex.get(index);
   if (tabId != null) {
-    try { chrome.tabs.remove(tabId); } catch {}
+    try { chrome.tabs.remove(tabId); } catch { }
     RUNTIME.createdTabs.delete(tabId);
     RUNTIME.assignedByTab.delete(tabId);
     RUNTIME.windowByTab.delete(tabId);
@@ -385,7 +400,7 @@ function setItemDone(index) {
 }
 
 function maybeFinish() {
-  const allDone = RUNTIME.queue.every(q => ["done","error"].includes(q.status));
+  const allDone = RUNTIME.queue.every(q => ["done", "error"].includes(q.status));
   if (allDone) {
     RUNTIME.active = false;
     stopRotator();
@@ -412,8 +427,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   // rotate only tabs that still need user‑gesture (NOT downloading/done/error)
   const candidates = Array.from(RUNTIME.createdTabs).filter(tabId => {
     const idx = RUNTIME.assignedByTab.get(tabId);
-    const st  = (idx != null) ? RUNTIME.queue[idx]?.status : null;
-    return st && ["assigned","submitted","waiting"].includes(st);
+    const st = (idx != null) ? RUNTIME.queue[idx]?.status : null;
+    return st && ["assigned", "submitted", "waiting"].includes(st);
   });
   if (!candidates.length) return;
 
@@ -427,7 +442,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     setTimeout(() => {
       chrome.tabs.sendMessage(tabId, { type: "FOREGROUND_TICK" }, () => void 0);
     }, 350);
-  } catch {}
+  } catch { }
 });
 
 // ---------------- downloads hooks ----------------
@@ -446,18 +461,37 @@ chrome.downloads.onCreated.addListener((item) => {
   }
 });
 
-// We must rename synchronously using the bound downloadId → index mapping.
+// Replace your existing onDeterminingFilename with this:
 chrome.downloads.onDeterminingFilename.addListener((details, suggest) => {
-  const idx = RUNTIME.downloadIdToIndex.get(details.id);
-  if (typeof idx === "number") {
-    const ext = inferExt(details.filename, details.mime);
-    const name = `${RUNTIME.folder}/${numName(idx, RUNTIME.pad)}.${ext}`;
-    suggest({ filename: name, conflictAction: "overwrite" });
-  } else {
-    // unknown download; leave as-is
+  try {
+    const idx = RUNTIME.downloadIdToIndex.get(details.id);
+    if (typeof idx === "number") {
+      // ext: try from details, else fallback to png
+      const ext = (inferExt(details.filename, details.mime) || "png").replace(/^\.+/, "") || "png";
+
+      // pad: prefer runtime, else compute safely
+      const pad = RUNTIME.pad || padWidth(RUNTIME.total || (idx + 1));
+
+      // folder: prefer runtime, else default
+      const folder = (RUNTIME.folder && String(RUNTIME.folder).trim()) || "assets/images";
+
+      // base name like 01, 002, etc.
+      const base = numName(idx, pad);
+
+      const name = `${folder}/${base}.${ext}`;
+      if (name && typeof name === "string" && name.trim().length > 0) {
+        suggest({ filename: name, conflictAction: "overwrite" });
+        return;
+      }
+    }
+    // Unknown download or failed to build a name → leave it as-is
+    suggest({});
+  } catch {
+    // On any exception, don't block Chrome
     suggest({});
   }
 });
+
 
 // Mark complete/error and close the tab
 chrome.downloads.onChanged.addListener((delta) => {
@@ -487,12 +521,12 @@ function bindDownloadToIndex(index, downloadId) {
 
 function inferExt(filenameOrUrl, mime) {
   const s = (filenameOrUrl || "").toLowerCase();
-  if (/\.(png)(\?|$)/.test(s))  return "png";
-  if (/\.(jpe?g)(\?|$)/.test(s))return "jpg";
+  if (/\.(png)(\?|$)/.test(s)) return "png";
+  if (/\.(jpe?g)(\?|$)/.test(s)) return "jpg";
   if (/\.(webp)(\?|$)/.test(s)) return "webp";
   if (mime) {
     const m = mime.toLowerCase();
-    if (m.includes("png"))  return "png";
+    if (m.includes("png")) return "png";
     if (m.includes("jpeg")) return "jpg";
     if (m.includes("webp")) return "webp";
   }

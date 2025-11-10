@@ -1,6 +1,7 @@
 // content_chatgpt.js — guaranteed submit + single download per prompt.
 // Stops clicking as soon as background says "DL_STARTED" (or when payload is intercepted).
-
+let KEEPALIVE_PORT = null;
+let KEEPALIVE_TIMER = null;
 (function () {
   let RUNNING = false;
   let CURRENT = null;
@@ -10,7 +11,7 @@
   let clickRetries = 0;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const qs  = (sel, root = document) => root.querySelector(sel);
+  const qs = (sel, root = document) => root.querySelector(sel);
   const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
   function compose({ globalId = "", styleModule = "", prompt, outputSuffix = "" }) {
@@ -22,70 +23,7 @@
 
   // --- MAIN-WORLD download intercept (anchor + window.open) ---
   function installDownloadIntercept() {
-    const code = `
-      (function(){
-        if (window.__EXT_DL_INSTALLED__) return;
-        window.__EXT_DL_INSTALLED__ = true;
-        window.__EXT_DL_ARMED__ = false;
 
-        window.addEventListener("message", (ev) => {
-          const d = ev && ev.data; if (!d || d.__extFlag__ !== true) return;
-          if (d.type === "ARM_DL") window.__EXT_DL_ARMED__ = true;
-        });
-        const post = (data) => {
-          if (!window.__EXT_DL_ARMED__) return;
-          window.__EXT_DL_ARMED__ = false;
-          window.postMessage(Object.assign({__extFlag__:true}, data), "*");
-        };
-
-        const urlToBlob = new Map();
-        const origURL = URL.createObjectURL;
-        URL.createObjectURL = function(obj){
-          const url = origURL.call(this, obj);
-          try { urlToBlob.set(url, obj); } catch(e){}
-          return url;
-        };
-
-        const aClick = HTMLAnchorElement.prototype.click;
-        HTMLAnchorElement.prototype.click = function(...args){
-          try{
-            const href = this.href || "";
-            const dl   = this.getAttribute("download");
-            const looksImg = /^data:image\\//i.test(href) || /^blob:/i.test(href) || /\\.(png|jpe?g|webp)$/i.test(href);
-            if (dl != null || looksImg) {
-              const b = urlToBlob.get(href);
-              if (b) {
-                const fr = new FileReader();
-                fr.onload = () => {
-                  const type = (b.type || "").toLowerCase();
-                  const ext  = type.includes("jpeg") ? "jpg" : (type.includes("webp") ? "webp" : "png");
-                  post({ type:"EXT_DL_DATAURL", dataUrl:String(fr.result), ext });
-                };
-                fr.readAsDataURL(b);
-              } else {
-                post({ type:"EXT_DL_URL", url: href });
-              }
-            }
-          }catch(e){}
-          return aClick.apply(this, args);
-        };
-
-        const wOpen = window.open;
-        window.open = function(url,n,s){
-          try{
-            if (typeof url === "string") {
-              const looksImg = /^data:image\\//i.test(url) || /^blob:/i.test(url) || /\\.(png|jpe?g|webp)$/i.test(url);
-              if (looksImg) post({ type:"EXT_DL_URL", url });
-            }
-          }catch(e){}
-          return wOpen.call(this,url,n,s);
-        };
-      })();
-    `;
-    const s = document.createElement("script");
-    s.textContent = code;
-    (document.documentElement || document.head || document.body).appendChild(s);
-    s.remove();
   }
 
   window.addEventListener("message", (ev) => {
@@ -150,15 +88,15 @@
       el.click();
       el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
       el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
-    } catch {}
+    } catch { }
   }
 
   function pressEnterOn(el) {
     try {
-      el.dispatchEvent(new KeyboardEvent("keydown", { key:"Enter", code:"Enter", keyCode:13, which:13, bubbles:true }));
-      el.dispatchEvent(new KeyboardEvent("keypress",{ key:"Enter", code:"Enter", keyCode:13, which:13, bubbles:true }));
-      el.dispatchEvent(new KeyboardEvent("keyup",   { key:"Enter", code:"Enter", keyCode:13, which:13, bubbles:true }));
-    } catch {}
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent("keypress", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    } catch { }
   }
 
   function findSendButton() {
@@ -245,6 +183,16 @@
     // Start a new prompt
     if (msg?.type === "RUN_PROMPT" && !RUNNING) {
       RUNNING = true;
+
+      if (!KEEPALIVE_PORT) {
+        try {
+          KEEPALIVE_PORT = chrome.runtime.connect({ name: "keepalive" });
+          // tiny heartbeat so the channel stays active even if idle
+          KEEPALIVE_TIMER = setInterval(() => {
+            try { KEEPALIVE_PORT.postMessage({ ping: Date.now() }); } catch { }
+          }, 25000);
+        } catch { }
+      }
       CURRENT = { index: msg.index };
       (async () => {
         try {
@@ -294,4 +242,11 @@
       chrome.runtime.sendMessage({ type: "DOWNLOAD_URL", index: CURRENT.index, url: d.url });
     }
   });
+
+  window.addEventListener("unload", () => {
+    try { KEEPALIVE_PORT && KEEPALIVE_PORT.disconnect(); } catch { }
+    KEEPALIVE_PORT = null;
+    if (KEEPALIVE_TIMER) { clearInterval(KEEPALIVE_TIMER); KEEPALIVE_TIMER = null; }
+  });
+
 })();
